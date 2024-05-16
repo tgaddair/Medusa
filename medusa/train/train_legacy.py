@@ -335,6 +335,20 @@ def train():
         config.rope_scaling = {"type": "linear", "factor": scaling_factor}
     config.use_cache = False
 
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        cache_dir=training_args.cache_dir,
+        model_max_length=training_args.model_max_length,
+        padding_side="right",
+        use_fast=True,
+    )
+    tokenizer.pad_token = tokenizer.unk_token
+    tokenizer.pad_token = tokenizer.eos_token
+
+    # Making sure the tokenizer works before loading the model.
+    print(tokenizer(["This is a test", "secondary"], padding=True))
+    print(tokenizer.apply_chat_template([{"role": "user", "content": "This is a test"}]))
+
     # Load model and tokenizer
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
@@ -344,9 +358,9 @@ def train():
     )
 
     # Freeze the base model
-    for param in model.base_model.parameters():
+    for param in model.parameters():
         param.requires_grad = False
-
+    
     # Add Medusa heads
     medusa_lm_head = MedusaModel(
         model,
@@ -354,18 +368,28 @@ def train():
         medusa_num_layers=training_args.medusa_num_layers,
         base_model_name_or_path=model_args.model_name_or_path,
     )
+    print(medusa_lm_head)
+    params_with_requires_grad = [name for name, param in model.named_parameters() if param.requires_grad]
+    print(params_with_requires_grad)
+
+    # medusa_lm_head = MedusaModel.from_pretrained(
+    #     # "/data/medusa-data/vicuna_2500_medusa_mlp_Mistral-7B-Instruct-v0.2_medusa_3_lr_0.001_layers_1",
+    #     # "/data/medusa-data/vicuna_full_2_medusa_mlp_Mistral-7B-Instruct-v0.2_medusa_3_lr_0.001_layers_1",
+    #     "/data/Medusa/tmp_vicuna_1_medusa_mlp_Mistral-7B-Instruct-v0.2_medusa_3_lr_0.001_layers_1",
+    #     torch_dtype=torch.bfloat16,
+    # )
+    # medusa_lm_head = medusa_lm_head.to("cuda")
+    # print(medusa_lm_head)
+
+    # for param in medusa_lm_head.base_model.parameters():
+    #     param.requires_grad = False
+    
+    # params_with_requires_grad = [name for name, param in medusa_lm_head.named_parameters() if param.requires_grad]
+    # print(params_with_requires_grad)
 
     # Format output dir
     training_args.output_dir = f"{training_args.output_dir}_medusa_mlp_{model_args.model_name_or_path.split('/')[-1]}_medusa_{training_args.medusa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.medusa_num_layers}"
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right",
-        use_fast=True,
-    )
-    tokenizer.pad_token = tokenizer.unk_token
 
     # Load data
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
@@ -375,6 +399,7 @@ def train():
         medusa_num_heads=training_args.medusa_num_heads,
         medusa_num_layers=training_args.medusa_num_layers,
         base_model_name_or_path=model_args.model_name_or_path,
+        version="2"
     )
 
     # Save Medusa config
@@ -397,9 +422,9 @@ def train():
         lm_head = medusa_lm_head.module.medusa_head
     else:
         lm_head = medusa_lm_head.medusa_head
-    import deepspeed
-    with deepspeed.zero.GatheredParameters(lm_head.parameters()):
-        state_dict = lm_head.state_dict()
+    # import deepspeed
+    # with deepspeed.zero.GatheredParameters(lm_head.parameters()):
+    state_dict = lm_head.state_dict()
 
     # Save Medusa heads
     if local_rank == 0:
